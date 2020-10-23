@@ -117,7 +117,10 @@ namespace UnityEngine.InputLegacy
             {
                 case var keyboardKeyCode when (keyCode >= KeyCode.None && keyCode <= KeyCode.Menu):
                 {
-                    var key = KeyCodeMapping.KeyCodeToKeyboardKey(keyboardKeyCode);
+                    //var key = KeyCodeMapping.KeyCodeToKeyboardKey(keyboardKeyCode);
+
+                    var key = WindowsKeyboardMapping.KeyCodeToKey(keyboardKeyCode);
+
                     return key.HasValue && ResolveState(Keyboard.current?[key.Value], request);
                 }
 
@@ -127,6 +130,7 @@ namespace UnityEngine.InputLegacy
                     return mouseButton.HasValue && ResolveState(GetMouseButtonControlForMouseButton(Mouse.current, mouseButton.Value), request);
                 }
 
+                /*
                 case var joystickKeyCode when (keyCode >= KeyCode.JoystickButton0 && keyCode <= KeyCode.Joystick8Button19):
                 {
                     var (joyNum, joystick0KeyCode) = KeyCodeMapping.KeyCodeToJoystickNumberAndJoystick0KeyCode(joystickKeyCode);
@@ -141,6 +145,7 @@ namespace UnityEngine.InputLegacy
                     // TODO
                     return false;
                 }
+                */
 
                 default:
                     return false;
