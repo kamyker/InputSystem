@@ -2,34 +2,47 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using UnityEngine.Assertions;
 using UnityEngine.InputSystem;
 
 namespace UnityEngine.InputLegacy
 {
     public class WindowsKeyboardMapping
     {
-        public static Key? KeyCodeToKey(KeyCode keyCode)
+        public static Key[] KeyCodeToKey(KeyCode keyCode)
         {
             if (s_SdlKeyToVirtualKey == null)
             {
-                s_SdlKeyToVirtualKey = new Dictionary<SDLK, VK>();
+                s_SdlKeyToVirtualKey = new Dictionary<SDLK, List<VK>>();
                 foreach (var pair in s_VirtualKeyToSdlKey)
-                    s_SdlKeyToVirtualKey[pair.Value] = pair.Key;
+                    if (s_SdlKeyToVirtualKey.TryGetValue(pair.Value, out var list))
+                        list.Add(pair.Key);
+                    else
+                        s_SdlKeyToVirtualKey[pair.Value] = new List<VK> {pair.Key};
             }
 
             if (s_ScanCodeToKey == null)
             {
-                s_ScanCodeToKey = new Dictionary<uint, Key>();
+                s_ScanCodeToKey = new Dictionary<uint, List<Key>>();
                 foreach (var pair in s_KeyToScanCode)
-                    s_ScanCodeToKey[pair.Value] = pair.Key;
+                    if (s_ScanCodeToKey.TryGetValue(pair.Value, out var list))
+                        list.Add(pair.Key);
+                    else
+                        s_ScanCodeToKey[pair.Value] = new List<Key> {pair.Key};
             }
 
-            if (!s_SdlKeyToVirtualKey.TryGetValue((SDLK) keyCode, out var virtualKeyCode))
-                return null;
+            if (!s_SdlKeyToVirtualKey.TryGetValue((SDLK) keyCode, out var virtualKeyCodes))
+                return new Key[] { };
 
-            var scanCode = MapVirtualKey((uint)virtualKeyCode, MapVirtualKeyMapTypes.MAPVK_VK_TO_VSC);
+            var mappedKeys = new List<Key>();
+            foreach (var virtualKeyCode in virtualKeyCodes)
+            {
+                var scanCode = MapVirtualKey((uint) virtualKeyCode, MapVirtualKeyMapTypes.MAPVK_VK_TO_VSC);
+                if (s_ScanCodeToKey.TryGetValue(scanCode, out var keys))
+                    mappedKeys.AddRange(keys);
+            }
 
-            return s_ScanCodeToKey.TryGetValue(scanCode, out var key) ? key : (Key?)null;
+            return mappedKeys.ToArray();
         }
 
         [DllImport("user32.dll")]
@@ -521,7 +534,7 @@ namespace UnityEngine.InputLegacy
             OEM_CLEAR = 0xFE,
         }
 
-        private static IDictionary<SDLK, VK> s_SdlKeyToVirtualKey;
+        private static IDictionary<SDLK, List<VK>> s_SdlKeyToVirtualKey;
 
         private static IDictionary<VK, SDLK> s_VirtualKeyToSdlKey = new Dictionary<VK, SDLK>()
         {
@@ -636,7 +649,7 @@ namespace UnityEngine.InputLegacy
             {VK.APPS, SDLK.MENU},
         };
 
-        private static IDictionary<uint, Key> s_ScanCodeToKey;
+        private static IDictionary<uint, List<Key>> s_ScanCodeToKey;
 
         private static IDictionary<Key, uint> s_KeyToScanCode = new Dictionary<Key, uint>()
         {

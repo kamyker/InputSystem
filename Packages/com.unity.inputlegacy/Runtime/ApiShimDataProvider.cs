@@ -119,9 +119,13 @@ namespace UnityEngine.InputLegacy
                 {
                     //var key = KeyCodeMapping.KeyCodeToKeyboardKey(keyboardKeyCode);
 
-                    var key = WindowsKeyboardMapping.KeyCodeToKey(keyboardKeyCode);
+                    var keys = WindowsKeyboardMapping.KeyCodeToKey(keyboardKeyCode);
 
-                    return key.HasValue && ResolveState(Keyboard.current?[key.Value], request);
+                    foreach (var key in keys)
+                        if (ResolveState(Keyboard.current?[key], request))
+                            return true;
+
+                    return false;
                 }
 
                 case var mouseKeyCode when (keyCode >= KeyCode.Mouse0 && keyCode <= KeyCode.Mouse6):
