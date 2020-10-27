@@ -7,46 +7,138 @@ using UnityEngine.InputSystem;
 
 namespace UnityEngine.InputLegacy
 {
-    public class WindowsKeyboardMapping
+    public static class WindowsKeyboardMapping
     {
-        public static Key[] KeyCodeToKey(KeyCode keyCode)
+        static WindowsKeyboardMapping()
         {
-            if (s_SdlKeyToVirtualKey == null)
+            foreach (var pair in s_VirtualKeyToSdlKey)
+                if (s_SdlKeyToVirtualKey.TryGetValue(pair.Value, out var list))
+                    list.Add(pair.Key);
+                else
+                    s_SdlKeyToVirtualKey[pair.Value] = new List<VK> {pair.Key};
+
+            foreach (var pair in s_KeyToScanCode)
             {
-                s_SdlKeyToVirtualKey = new Dictionary<SDLK, List<VK>>();
-                foreach (var pair in s_VirtualKeyToSdlKey)
-                    if (s_SdlKeyToVirtualKey.TryGetValue(pair.Value, out var list))
-                        list.Add(pair.Key);
-                    else
-                        s_SdlKeyToVirtualKey[pair.Value] = new List<VK> {pair.Key};
+                var key = (pair.scancode, pair.extended);
+                if (s_ScanCodeToKey.ContainsKey(key))
+                    Debug.Assert(false);
+                s_ScanCodeToKey[key] = pair.key;
+            }
+        }
+
+        // Some keys should map to extended scan codes based on state of shift/numlock,
+        // but MapVirtualKeyEx doesn't take into account the state of following buttons.
+        private static VK[] VirtualKeysBasedOnShiftNumlockStatus(VK key, bool shiftStatus, bool numlockStatus)
+        {
+            if (key == VK.NUMPAD4)
+            {
+                int a = 1;
+            }
+            if ((numlockStatus && !shiftStatus) || (!numlockStatus && shiftStatus))
+                return new[] {key};
+
+            switch (key)
+            {
+                // In numlock state extended keys should work if any of two are pressed.
+                // So VK.INSERT should trigger when either VK.INSERT or VK.NUMPAD0 are pressed.
+                case VK.INSERT: return new[] {key, VK.NUMPAD0};
+                case VK.DELETE: return new[] {key, VK.DECIMAL};
+                case VK.HOME: return new[] {key, VK.NUMPAD7};
+                case VK.END: return new[] {key, VK.NUMPAD1};
+                case VK.PRIOR: return new[] {key, VK.NUMPAD9};
+                case VK.NEXT: return new[] {key, VK.NUMPAD3};
+                case VK.LEFT: return new[] {key, VK.NUMPAD4};
+                case VK.RIGHT: return new[] {key, VK.NUMPAD6};
+                case VK.UP: return new[] {key, VK.NUMPAD8};
+                case VK.DOWN: return new[] {key, VK.NUMPAD2};
+                case VK.CLEAR: return new[] {key, VK.NUMPAD5};
+
+                // If we're in numlock state, old system ignores numpad keys.
+                case VK.NUMPAD0:
+                case VK.NUMPAD1:
+                case VK.NUMPAD2:
+                case VK.NUMPAD3:
+                case VK.NUMPAD4:
+                case VK.NUMPAD5:
+                case VK.NUMPAD6:
+                case VK.NUMPAD7:
+                case VK.NUMPAD8:
+                case VK.NUMPAD9:
+                case VK.DECIMAL:
+                    return new VK[] { };
             }
 
-            if (s_ScanCodeToKey == null)
+            return new[] {key};
+        }
+
+        private static bool ShouldUseExtendedScanCode(VK key)
+        {
+            // Extended keys should always use extended scancode.
+            switch (key)
             {
-                s_ScanCodeToKey = new Dictionary<uint, List<Key>>();
-                foreach (var pair in s_KeyToScanCode)
-                    if (s_ScanCodeToKey.TryGetValue(pair.Value, out var list))
-                        list.Add(pair.Key);
-                    else
-                        s_ScanCodeToKey[pair.Value] = new List<Key> {pair.Key};
+                case VK.INSERT:
+                case VK.DELETE:
+                case VK.HOME:
+                case VK.END:
+                case VK.PRIOR:
+                case VK.NEXT:
+                case VK.LEFT:
+                case VK.RIGHT:
+                case VK.UP:
+                case VK.DOWN:
+                    return true;
             }
+
+            return false;
+        }
+
+        public static Key[] KeyCodeToKey(KeyCode keyCode)
+        {
+            var layout = GetKeyboardLayout(0);
+            var shiftStatus = (GetKeyState((int) VK.SHIFT) & 0xFF00) != 0;
+            var numlockStatus = (GetKeyState((int) VK.NUMLOCK) & 0xFF) != 0;
 
             if (!s_SdlKeyToVirtualKey.TryGetValue((SDLK) keyCode, out var virtualKeyCodes))
                 return new Key[] { };
 
             var mappedKeys = new List<Key>();
-            foreach (var virtualKeyCode in virtualKeyCodes)
+            foreach (var virtualKeyCodeAsHardMapped in virtualKeyCodes)
             {
-                var scanCode = MapVirtualKey((uint) virtualKeyCode, MapVirtualKeyMapTypes.MAPVK_VK_TO_VSC);
-                if (s_ScanCodeToKey.TryGetValue(scanCode, out var keys))
-                    mappedKeys.AddRange(keys);
+                foreach (var virtualKeyCode in VirtualKeysBasedOnShiftNumlockStatus(virtualKeyCodeAsHardMapped,
+                    shiftStatus, numlockStatus))
+                {
+                    var scanCode = MapVirtualKeyEx((uint) virtualKeyCode,
+                        MapVirtualKeyMapTypes.MAPVK_VK_TO_VSC_EX,
+                        layout);
+                    var scanCodeLowPart = scanCode & 0xFF;
+
+                    bool isExtended = ((scanCode & (0xE000) + scanCode & (0xE100)) != 0) ||
+                                              ShouldUseExtendedScanCode(virtualKeyCode);
+
+                    switch (virtualKeyCode)
+                    {
+                        case VK.LEFT:
+                        case VK.NUMPAD4:
+                            int a = 1;
+                            break;
+                    }
+
+                    if (s_ScanCodeToKey.TryGetValue((scanCodeLowPart, isExtended), out var key))
+                        mappedKeys.Add(key);
+                }
             }
 
             return mappedKeys.ToArray();
         }
 
         [DllImport("user32.dll")]
-        private static extern uint MapVirtualKey(uint uCode, MapVirtualKeyMapTypes uMapType);
+        static extern uint MapVirtualKeyEx(uint uCode, MapVirtualKeyMapTypes uMapType, IntPtr dwhkl);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetKeyboardLayout(uint idThread);
+
+        [DllImport("user32.dll")]
+        static extern short GetKeyState(int nVirtKey);
 
         private enum MapVirtualKeyMapTypes : uint
         {
@@ -534,7 +626,7 @@ namespace UnityEngine.InputLegacy
             OEM_CLEAR = 0xFE,
         }
 
-        private static IDictionary<SDLK, List<VK>> s_SdlKeyToVirtualKey;
+        private static IDictionary<SDLK, List<VK>> s_SdlKeyToVirtualKey = new Dictionary<SDLK, List<VK>>();
 
         private static IDictionary<VK, SDLK> s_VirtualKeyToSdlKey = new Dictionary<VK, SDLK>()
         {
@@ -649,116 +741,118 @@ namespace UnityEngine.InputLegacy
             {VK.APPS, SDLK.MENU},
         };
 
-        private static IDictionary<uint, List<Key>> s_ScanCodeToKey;
+        private static IDictionary<(uint scancode, bool extended), Key> s_ScanCodeToKey =
+            new Dictionary<(uint scancode, bool extended), Key>();
 
-        private static IDictionary<Key, uint> s_KeyToScanCode = new Dictionary<Key, uint>()
-        {
-            {Key.Escape, 0x01},
-            {Key.F1, 0x3B},
-            {Key.F2, 0x3C},
-            {Key.F3, 0x3D},
-            {Key.F4, 0x3E},
-            {Key.F5, 0x3F},
-            {Key.F6, 0x40},
-            {Key.F7, 0x41},
-            {Key.F8, 0x42},
-            {Key.F9, 0x43},
-            {Key.F10, 0x44},
-            {Key.F11, 0x57},
-            {Key.F12, 0x58},
-            {Key.PrintScreen, 0x2A},
-            {Key.ScrollLock, 0x46},
-            {Key.Pause, 0x46},
-            {Key.Backquote, 0x29},
-            {Key.Digit1, 0x02},
-            {Key.Digit2, 0x03},
-            {Key.Digit3, 0x04},
-            {Key.Digit4, 0x05},
-            {Key.Digit5, 0x06},
-            {Key.Digit6, 0x07},
-            {Key.Digit7, 0x08},
-            {Key.Digit8, 0x09},
-            {Key.Digit9, 0x0A},
-            {Key.Digit0, 0x0B},
-            {Key.Minus, 0x0C},
-            {Key.Equals, 0x0D},
-            {Key.Backspace, 0x0E},
-            {Key.Tab, 0x0F},
-            {Key.Q, 0x10},
-            {Key.W, 0x11},
-            {Key.E, 0x12},
-            {Key.R, 0x13},
-            {Key.T, 0x14},
-            {Key.Y, 0x15},
-            {Key.U, 0x16},
-            {Key.I, 0x17},
-            {Key.O, 0x18},
-            {Key.P, 0x19},
-            {Key.LeftBracket, 0x1A},
-            {Key.RightBracket, 0x1B},
-            {Key.Backslash, 0x2B},
-            {Key.CapsLock, 0x3A},
-            {Key.A, 0x1E},
-            {Key.S, 0x1F},
-            {Key.D, 0x20},
-            {Key.F, 0x21},
-            {Key.G, 0x22},
-            {Key.H, 0x23},
-            {Key.J, 0x24},
-            {Key.K, 0x25},
-            {Key.L, 0x26},
-            {Key.Semicolon, 0x27},
-            {Key.Quote, 0x28},
-            {Key.Enter, 0x1C},
-            {Key.LeftShift, 0x2A},
-            {Key.OEM1, 0x56},
-            {Key.Z, 0x2C},
-            {Key.X, 0x2D},
-            {Key.C, 0x2E},
-            {Key.V, 0x2F},
-            {Key.B, 0x30},
-            {Key.N, 0x31},
-            {Key.M, 0x32},
-            {Key.Comma, 0x33},
-            {Key.Period, 0x34},
-            {Key.Slash, 0x35},
-            {Key.OEM2, 0x73},
-            {Key.RightShift, 0x36},
-            {Key.LeftCtrl, 0x1D},
-            {Key.LeftMeta, 0x5B},
-            {Key.LeftAlt, 0x38},
-            {Key.Space, 0x39},
-            {Key.RightAlt, 0x38},
-            {Key.RightMeta, 0x5C},
-            {Key.ContextMenu, 0x5D},
-            {Key.RightCtrl, 0x1D},
-            {Key.NumLock, 0x45},
-            {Key.NumpadDivide, 0x35},
-            {Key.NumpadMultiply, 0x37},
-            {Key.Numpad7, 0x47},
-            {Key.Numpad8, 0x48},
-            {Key.Numpad9, 0x49},
-            {Key.NumpadMinus, 0x4A},
-            {Key.Numpad4, 0x4B},
-            {Key.Numpad5, 0x4C},
-            {Key.Numpad6, 0x4D},
-            {Key.NumpadPlus, 0x4E},
-            {Key.Numpad2, 0x50},
-            {Key.Numpad3, 0x51},
-            {Key.Numpad1, 0x4F},
-            {Key.Numpad0, 0x52},
-            {Key.NumpadPeriod, 0x53},
-            {Key.NumpadEnter, 0x1C},
-            {Key.Insert, 0x52},
-            {Key.Delete, 0x53},
-            {Key.Home, 0x47},
-            {Key.End, 0x4F},
-            {Key.PageUp, 0x49},
-            {Key.PageDown, 0x51},
-            {Key.UpArrow, 0x48},
-            {Key.LeftArrow, 0x4B},
-            {Key.DownArrow, 0x50},
-            {Key.RightArrow, 0x4D},
-        };
+        private static List<(Key key, uint scancode, bool extended)> s_KeyToScanCode =
+            new List<(Key key, uint scancode, bool extended)>()
+            {
+                (Key.Escape, 0x01, false),
+                (Key.F1, 0x3B, false),
+                (Key.F2, 0x3C, false),
+                (Key.F3, 0x3D, false),
+                (Key.F4, 0x3E, false),
+                (Key.F5, 0x3F, false),
+                (Key.F6, 0x40, false),
+                (Key.F7, 0x41, false),
+                (Key.F8, 0x42, false),
+                (Key.F9, 0x43, false),
+                (Key.F10, 0x44, false),
+                (Key.F11, 0x57, false),
+                (Key.F12, 0x58, false),
+                (Key.PrintScreen, 0x2A, true),
+                (Key.ScrollLock, 0x46, false),
+                (Key.Pause, 0x46, true),
+                (Key.Backquote, 0x29, false),
+                (Key.Digit1, 0x02, false),
+                (Key.Digit2, 0x03, false),
+                (Key.Digit3, 0x04, false),
+                (Key.Digit4, 0x05, false),
+                (Key.Digit5, 0x06, false),
+                (Key.Digit6, 0x07, false),
+                (Key.Digit7, 0x08, false),
+                (Key.Digit8, 0x09, false),
+                (Key.Digit9, 0x0A, false),
+                (Key.Digit0, 0x0B, false),
+                (Key.Minus, 0x0C, false),
+                (Key.Equals, 0x0D, false),
+                (Key.Backspace, 0x0E, false),
+                (Key.Tab, 0x0F, false),
+                (Key.Q, 0x10, false),
+                (Key.W, 0x11, false),
+                (Key.E, 0x12, false),
+                (Key.R, 0x13, false),
+                (Key.T, 0x14, false),
+                (Key.Y, 0x15, false),
+                (Key.U, 0x16, false),
+                (Key.I, 0x17, false),
+                (Key.O, 0x18, false),
+                (Key.P, 0x19, false),
+                (Key.LeftBracket, 0x1A, false),
+                (Key.RightBracket, 0x1B, false),
+                (Key.Backslash, 0x2B, false),
+                (Key.CapsLock, 0x3A, false),
+                (Key.A, 0x1E, false),
+                (Key.S, 0x1F, false),
+                (Key.D, 0x20, false),
+                (Key.F, 0x21, false),
+                (Key.G, 0x22, false),
+                (Key.H, 0x23, false),
+                (Key.J, 0x24, false),
+                (Key.K, 0x25, false),
+                (Key.L, 0x26, false),
+                (Key.Semicolon, 0x27, false),
+                (Key.Quote, 0x28, false),
+                (Key.Enter, 0x1C, false),
+                (Key.LeftShift, 0x2A, false),
+                (Key.OEM1, 0x56, false),
+                (Key.Z, 0x2C, false),
+                (Key.X, 0x2D, false),
+                (Key.C, 0x2E, false),
+                (Key.V, 0x2F, false),
+                (Key.B, 0x30, false),
+                (Key.N, 0x31, false),
+                (Key.M, 0x32, false),
+                (Key.Comma, 0x33, false),
+                (Key.Period, 0x34, false),
+                (Key.Slash, 0x35, false),
+                (Key.OEM2, 0x73, false),
+                (Key.RightShift, 0x36, false),
+                (Key.LeftCtrl, 0x1D, false),
+                (Key.LeftMeta, 0x5B, true),
+                (Key.LeftAlt, 0x38, false),
+                (Key.Space, 0x39, false),
+                (Key.RightAlt, 0x38, true),
+                (Key.RightMeta, 0x5C, true),
+                (Key.ContextMenu, 0x5D, true),
+                (Key.RightCtrl, 0x1D, true),
+                (Key.NumLock, 0x45, false),
+                (Key.NumpadDivide, 0x35, true),
+                (Key.NumpadMultiply, 0x37, false),
+                (Key.Numpad7, 0x47, false),
+                (Key.Numpad8, 0x48, false),
+                (Key.Numpad9, 0x49, false),
+                (Key.NumpadMinus, 0x4A, false),
+                (Key.Numpad4, 0x4B, false),
+                (Key.Numpad5, 0x4C, false),
+                (Key.Numpad6, 0x4D, false),
+                (Key.NumpadPlus, 0x4E, false),
+                (Key.Numpad2, 0x50, false),
+                (Key.Numpad3, 0x51, false),
+                (Key.Numpad1, 0x4F, false),
+                (Key.Numpad0, 0x52, false),
+                (Key.NumpadPeriod, 0x53, false),
+                (Key.NumpadEnter, 0x1C, true),
+                (Key.Insert, 0x52, true),
+                (Key.Delete, 0x53, true),
+                (Key.Home, 0x47, true),
+                (Key.End, 0x4F, true),
+                (Key.PageUp, 0x49, true),
+                (Key.PageDown, 0x51, true),
+                (Key.UpArrow, 0x48, true),
+                (Key.LeftArrow, 0x4B, true),
+                (Key.DownArrow, 0x50, true),
+                (Key.RightArrow, 0x4D, true),
+            };
     }
 }
