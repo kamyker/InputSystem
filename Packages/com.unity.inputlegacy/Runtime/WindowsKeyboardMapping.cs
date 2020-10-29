@@ -34,6 +34,7 @@ namespace UnityEngine.InputLegacy
             {
                 int a = 1;
             }
+
             if ((numlockStatus && !shiftStatus) || (!numlockStatus && shiftStatus))
                 return new[] {key};
 
@@ -92,10 +93,12 @@ namespace UnityEngine.InputLegacy
             return false;
         }
 
-        public static Key[] KeyCodeToKey(KeyCode keyCode)
+        public static Key[] KeyCodeToKey(KeyCode keyCode, bool shiftStatus)
         {
             var layout = GetKeyboardLayout(0);
-            var shiftStatus = (GetKeyState((int) VK.SHIFT) & 0xFF00) != 0;
+            // virtual shift status is NOT accurate, it can change when using numpad
+            // see https://stackoverflow.com/questions/24822505/how-to-tell-if-shift-is-pressed-on-numpad-input-with-numlock-on-or-at-least-get
+            // var shiftStatus = (GetKeyState((int) VK.SHIFT) & 0xFF00) != 0;
             var numlockStatus = (GetKeyState((int) VK.NUMLOCK) & 0xFF) != 0;
 
             if (!s_SdlKeyToVirtualKey.TryGetValue((SDLK) keyCode, out var virtualKeyCodes))

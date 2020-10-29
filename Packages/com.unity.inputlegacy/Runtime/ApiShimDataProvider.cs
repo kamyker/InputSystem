@@ -119,7 +119,7 @@ namespace UnityEngine.InputLegacy
                 {
                     //var key = KeyCodeMapping.KeyCodeToKeyboardKey(keyboardKeyCode);
 
-                    var keys = WindowsKeyboardMapping.KeyCodeToKey(keyboardKeyCode);
+                    var keys = WindowsKeyboardMapping.KeyCodeToKey(keyboardKeyCode, Keyboard.current.shiftKey.isPressed);
 
                     foreach (var key in keys)
                         if (ResolveState(Keyboard.current?[key], request))
