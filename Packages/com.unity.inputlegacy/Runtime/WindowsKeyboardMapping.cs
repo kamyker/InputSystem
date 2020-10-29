@@ -93,6 +93,14 @@ namespace UnityEngine.InputLegacy
             return false;
         }
 
+        private static uint? ShouldHardOverrideScanCode(VK key)
+        {
+            if (key == VK.PAUSE)
+                return 0xE046;
+            return null;
+        }
+
+
         public static Key[] KeyCodeToKey(KeyCode keyCode, bool shiftStatus)
         {
             var layout = GetKeyboardLayout(0);
@@ -110,21 +118,15 @@ namespace UnityEngine.InputLegacy
                 foreach (var virtualKeyCode in VirtualKeysBasedOnShiftNumlockStatus(virtualKeyCodeAsHardMapped,
                     shiftStatus, numlockStatus))
                 {
-                    var scanCode = MapVirtualKeyEx((uint) virtualKeyCode,
+                    var overrideScancode = ShouldHardOverrideScanCode(virtualKeyCode);
+
+                    var scanCode = overrideScancode ?? MapVirtualKeyEx((uint) virtualKeyCode,
                         MapVirtualKeyMapTypes.MAPVK_VK_TO_VSC_EX,
                         layout);
                     var scanCodeLowPart = scanCode & 0xFF;
 
-                    bool isExtended = ((scanCode & (0xE000) + scanCode & (0xE100)) != 0) ||
+                    var isExtended = ((scanCode & (0xE000) + scanCode & (0xE100)) != 0) ||
                                               ShouldUseExtendedScanCode(virtualKeyCode);
-
-                    switch (virtualKeyCode)
-                    {
-                        case VK.LEFT:
-                        case VK.NUMPAD4:
-                            int a = 1;
-                            break;
-                    }
 
                     if (s_ScanCodeToKey.TryGetValue((scanCodeLowPart, isExtended), out var key))
                         mappedKeys.Add(key);
