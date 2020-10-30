@@ -61,7 +61,7 @@ namespace UnityEngine.InputLegacy
             }
         }
 
-        public static void Enable(Action<char> keyboardOnText)
+        public static void Enable(Action<char> keyboardOnText, Action deviceChange)
         {
             m_KeyboardOnText = keyboardOnText;
 
@@ -69,10 +69,12 @@ namespace UnityEngine.InputLegacy
             foreach (var device in InputSystem.InputSystem.devices)
                 OnDeviceAdd(device);
 
-            // Monitor joysticks and gamepads.
+            // Monitor devices.
             InputSystem.InputSystem.onDeviceChange +=
                 (device, change) =>
                 {
+                    deviceChange();
+
                     if (change == InputDeviceChange.Removed)
                         OnDeviceAdd(device);
                     else if (change == InputDeviceChange.Added)

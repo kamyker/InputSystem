@@ -235,7 +235,7 @@ namespace UnityEngine.InputLegacy
             //     }
             // }
 
-            DeviceMonitor.Enable(ApiShimDataProvider.OnTextChange);
+            DeviceMonitor.Enable(ApiShimDataProvider.OnTextChange, ApiShimDataProvider.OnDeviceChange);
             InputSystem.EnhancedTouch.EnhancedTouchSupport.Enable();
             Input.provider = new ApiShimDataProvider(
 /*

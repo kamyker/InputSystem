@@ -1,9 +1,10 @@
-﻿using System;
-using System.Collections;
+﻿#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN || UNITY_WSA
+
+using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using UnityEngine.Assertions;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.Controls;
 
 namespace UnityEngine.InputLegacy
 {
@@ -26,15 +27,10 @@ namespace UnityEngine.InputLegacy
             }
         }
 
-        // Some keys should map to extended scan codes based on state of shift/numlock,
-        // but MapVirtualKeyEx doesn't take into account the state of following buttons.
+        // Some virtual keys should map to extended scan codes based on state of shift/numlock,
+        // but MapVirtualKeyEx doesn't take into the account the state of shift/numlock.
         private static VK[] VirtualKeysBasedOnShiftNumlockStatus(VK key, bool shiftStatus, bool numlockStatus)
         {
-            if (key == VK.NUMPAD4)
-            {
-                int a = 1;
-            }
-
             if ((numlockStatus && !shiftStatus) || (!numlockStatus && shiftStatus))
                 return new[] {key};
 
@@ -72,6 +68,9 @@ namespace UnityEngine.InputLegacy
             return new[] {key};
         }
 
+        // Some virtual keys should always map to extended scancode for our mapping,
+        // but MapVirtualKeyEx returns non-extended scancodes for them.
+        // This function returns true if we should override MapVirtualKeyEx result and use extended scancode instead.
         private static bool ShouldUseExtendedScanCode(VK key)
         {
             // Extended keys should always use extended scancode.
@@ -93,57 +92,96 @@ namespace UnityEngine.InputLegacy
             return false;
         }
 
-        private static uint? ShouldHardOverrideScanCode(VK key)
+        // For some keys we do custom processing in the native backend,
+        // so we should use custom mapping between virtual key and scancode for them.
+        private static uint? DirectResolveScanCode(VK key)
         {
-            if (key == VK.PAUSE)
-                return 0xE046;
+            uint extended = 0xE000;
+            switch (key)
+            {
+                case VK.PAUSE:
+                    return 0x46 + extended;
+                case VK.KEYPAD_ENTER:
+                    return 0x1C + extended;
+            }
+
             return null;
         }
 
-
-        public static Key[] KeyCodeToKey(KeyCode keyCode, bool shiftStatus)
+        public static bool GetNumlockState()
         {
-            var layout = GetKeyboardLayout(0);
-            // virtual shift status is NOT accurate, it can change when using numpad
+            // Virtual shift status is NOT accurate, it can change when using numpad
             // see https://stackoverflow.com/questions/24822505/how-to-tell-if-shift-is-pressed-on-numpad-input-with-numlock-on-or-at-least-get
-            // var shiftStatus = (GetKeyState((int) VK.SHIFT) & 0xFF00) != 0;
-            var numlockStatus = (GetKeyState((int) VK.NUMLOCK) & 0xFF) != 0;
+            // So we're using raw input to get shift status instead.
+            return (GetKeyState((int) VK.NUMLOCK) & 0xFF) != 0;
+        }
 
-            if (!s_SdlKeyToVirtualKey.TryGetValue((SDLK) keyCode, out var virtualKeyCodes))
-                return new Key[] { };
-
-            var mappedKeys = new List<Key>();
+        private static List<ButtonControl> MapVirtualKeyCodesToKeys(List<VK> virtualKeyCodes, bool shiftStatus,
+            bool numlockStatus, IntPtr layout)
+        {
+            var mappedKeys = new List<ButtonControl>();
             foreach (var virtualKeyCodeAsHardMapped in virtualKeyCodes)
             {
-                foreach (var virtualKeyCode in VirtualKeysBasedOnShiftNumlockStatus(virtualKeyCodeAsHardMapped,
+                foreach (var virtualKeyCode in VirtualKeysBasedOnShiftNumlockStatus(
+                    virtualKeyCodeAsHardMapped,
                     shiftStatus, numlockStatus))
                 {
-                    var overrideScancode = ShouldHardOverrideScanCode(virtualKeyCode);
-
-                    var scanCode = overrideScancode ?? MapVirtualKeyEx((uint) virtualKeyCode,
+                    var scanCode = DirectResolveScanCode(virtualKeyCode) ?? MapVirtualKeyEx(
+                        (uint) virtualKeyCode,
                         MapVirtualKeyMapTypes.MAPVK_VK_TO_VSC_EX,
                         layout);
+
                     var scanCodeLowPart = scanCode & 0xFF;
 
                     var isExtended = ((scanCode & (0xE000) + scanCode & (0xE100)) != 0) ||
-                                              ShouldUseExtendedScanCode(virtualKeyCode);
+                                     ShouldUseExtendedScanCode(virtualKeyCode);
 
-                    if (s_ScanCodeToKey.TryGetValue((scanCodeLowPart, isExtended), out var key))
-                        mappedKeys.Add(key);
+                    if (!s_ScanCodeToKey.TryGetValue((scanCodeLowPart, isExtended), out var key) ||
+                        Keyboard.current == null) continue;
+
+                    if (virtualKeyCode == VK.LWIN || virtualKeyCode == VK.RWIN)
+                    {
+                        Debug.Log($"VK {virtualKeyCode} is mapped to scancode {scanCode:X}");
+                    }
+
+                    var control = Keyboard.current[key];
+                    if (control != null)
+                        mappedKeys.Add(control);
                 }
             }
 
-            return mappedKeys.ToArray();
+            return mappedKeys;
+        }
+
+        public static Dictionary<(KeyCode keyCode, bool shiftStatus, bool numlockStatus), ButtonControl[]>
+            GetMappingForCurrentLayout()
+        {
+            var layout = GetKeyboardLayout(0);
+
+            var mapping = new Dictionary<(KeyCode keyCode, bool shiftStatus, bool numlockStatus), ButtonControl[]>();
+
+            foreach (var keyCode in (KeyCode[]) Enum.GetValues(typeof(KeyCode)))
+            {
+                if (!s_SdlKeyToVirtualKey.TryGetValue((SDLK) keyCode, out var virtualKeyCodes))
+                    continue;
+
+                foreach (var shiftStatus in new[] {false, true})
+                foreach (var numlockStatus in new[] {false, true})
+                    mapping[(keyCode, shiftStatus, numlockStatus)] =
+                        MapVirtualKeyCodesToKeys(virtualKeyCodes, shiftStatus, numlockStatus, layout).ToArray();
+            }
+
+            return mapping;
         }
 
         [DllImport("user32.dll")]
-        static extern uint MapVirtualKeyEx(uint uCode, MapVirtualKeyMapTypes uMapType, IntPtr dwhkl);
+        private static extern uint MapVirtualKeyEx(uint uCode, MapVirtualKeyMapTypes uMapType, IntPtr dwhkl);
 
         [DllImport("user32.dll")]
-        static extern IntPtr GetKeyboardLayout(uint idThread);
+        private static extern IntPtr GetKeyboardLayout(uint idThread);
 
         [DllImport("user32.dll")]
-        static extern short GetKeyState(int nVirtKey);
+        private static extern short GetKeyState(int nVirtKey);
 
         private enum MapVirtualKeyMapTypes : uint
         {
@@ -629,6 +667,10 @@ namespace UnityEngine.InputLegacy
             NONAME = 0xFC,
             PA1 = 0xFD,
             OEM_CLEAR = 0xFE,
+
+            // Not a real VK, but just a wrapper to pipe keypad enter through to scancodes.
+            // Native backend does custom handling of VK_RETURN to get the extended flag.
+            KEYPAD_ENTER = 0xFF00,
         }
 
         private static IDictionary<SDLK, List<VK>> s_SdlKeyToVirtualKey = new Dictionary<SDLK, List<VK>>();
@@ -744,6 +786,9 @@ namespace UnityEngine.InputLegacy
             {VK.LWIN, SDLK.LMETA},
             {VK.RWIN, SDLK.RMETA},
             {VK.APPS, SDLK.MENU},
+
+            // Not part of original mapping.
+            {VK.KEYPAD_ENTER, SDLK.KP_ENTER},
         };
 
         private static IDictionary<(uint scancode, bool extended), Key> s_ScanCodeToKey =
@@ -861,3 +906,5 @@ namespace UnityEngine.InputLegacy
             };
     }
 }
+
+#endif

@@ -22,22 +22,15 @@ namespace UnityEngine.InputLegacy
                 s_InputStringData += x.ToString();
         }
 
-        public ApiShimDataProvider(
-            /*
-            InputActionMap setMap,
-            IDictionary<string, ActionStateListener> setStateListeners,
-            ActionStateListener[] setKeyActions
-            */
-        )
+        public static void OnDeviceChange()
         {
-            // map = setMap;
-            // stateListeners = setStateListeners;
-            // keyActions = setKeyActions;
+            s_KeyboardMapping = null;
         }
 
-        //private InputActionMap map;
-        //private IDictionary<string, ActionStateListener> stateListeners; // TODO remove this later on
-        //private ActionStateListener[] keyActions; // array of keycodes
+        // Maps Keycode+Shift+Numlock to array of button controls.
+        // Mapping is layout sensitive, so should be reset every time keyboard layout changes.
+        private static IDictionary<(KeyCode keyCode, bool shiftStatus, bool numlockStatus), ButtonControl[]>
+            s_KeyboardMapping;
 
         private static string s_InputStringData = "";
         private static uint s_InputStringStep = 0;
@@ -117,12 +110,20 @@ namespace UnityEngine.InputLegacy
             {
                 case var keyboardKeyCode when (keyCode >= KeyCode.None && keyCode <= KeyCode.Menu):
                 {
-                    //var key = KeyCodeMapping.KeyCodeToKeyboardKey(keyboardKeyCode);
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN || UNITY_WSA
+                    if (s_KeyboardMapping == null)
+                        s_KeyboardMapping = WindowsKeyboardMapping.GetMappingForCurrentLayout();
 
-                    var keys = WindowsKeyboardMapping.KeyCodeToKey(keyboardKeyCode, Keyboard.current.shiftKey.isPressed);
+                    var shiftStatus = Keyboard.current.shiftKey.isPressed;
+                    var numlockStatus = WindowsKeyboardMapping.GetNumlockState();
+#endif
 
-                    foreach (var key in keys)
-                        if (ResolveState(Keyboard.current?[key], request))
+                    if (!s_KeyboardMapping.TryGetValue((keyboardKeyCode, shiftStatus, numlockStatus),
+                        out var buttonControls))
+                        return false;
+
+                    foreach (var buttonControl in buttonControls)
+                        if (ResolveState(buttonControl, request))
                             return true;
 
                     return false;
@@ -131,7 +132,8 @@ namespace UnityEngine.InputLegacy
                 case var mouseKeyCode when (keyCode >= KeyCode.Mouse0 && keyCode <= KeyCode.Mouse6):
                 {
                     var mouseButton = KeyCodeMapping.KeyCodeToMouseButton(mouseKeyCode);
-                    return mouseButton.HasValue && ResolveState(GetMouseButtonControlForMouseButton(Mouse.current, mouseButton.Value), request);
+                    return mouseButton.HasValue &&
+                           ResolveState(GetMouseButtonControlForMouseButton(Mouse.current, mouseButton.Value), request);
                 }
 
                 /*
@@ -204,7 +206,7 @@ namespace UnityEngine.InputLegacy
             t.position = f.screenPosition;
             t.rawPosition = f.screenPosition; // ???
             t.deltaPosition = f.delta;
-            t.deltaTime = (float)f.time; // ???
+            t.deltaTime = (float) f.time; // ???
             t.tapCount = f.tapCount;
             switch (f.phase)
             {
